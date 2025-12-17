@@ -1,0 +1,252 @@
+# -*- coding: utf-8 -*-
+import numpy as np
+from numpy.fft import fft, fftshift
+import tools
+import matplotlib.pyplot as plt
+
+class GaussianDiff:
+
+    def init(self, magnitude, A_max, F_max, dt, Sc=1.0, eps=1.0, mu=1.0):
+        '''
+        magnitude - максимальное значение в источнике;
+        dg - коэффициент, задающий начальную задержку гауссова импульса;
+        wg - коэффициент, задающий ширину гауссова импульса.
+        '''
+        self.magnitude = magnitude
+        self.Sc = Sc
+        self.dt = dt
+        self.eps = eps
+        self.mu = mu
+        self.A_max = A_max
+        self.F_max = F_max
+
+    def getE(self, m, q):
+        w_g = np.sqrt(np.log(5.5 * self.A_max)) / (np.pi * self.F_max)
+        d_g = w_g * np.sqrt(np.log(2.5 * self.A_max * np.sqrt(np.log(2.5 * self.A_max))))
+        e = ((q - m * np.sqrt(self.eps * self.mu) / self.Sc) - d_g / self.dt) / (w_g / self.dt)
+        return -2 * self.magnitude * e * np.exp(-(e ** 2))
+
+if name == 'main':
+    d = 1e-3
+    # Характеристическое сопротивление свободного пространства
+    Z0 = 120.0 * np.pi
+    # Число Куранта
+    Sc = 1.0
+    # Магнитная постоянная
+    mu0 = np.pi * 4e-7
+    # Электрическая постоянная
+    eps0 = 8.854187817e-12
+    # Скорость света в вакууме
+    c = 1.0 / np.sqrt(mu0 * eps0)
+    Cdtds = 1.0 / np.sqrt(2.0)
+    dt = d / c * Cdtds
+    print(dt)
+
+    # Время расчета в отсчетах
+    maxTime_sec = 6e-9
+    maxTime = int(np.ceil(maxTime_sec / dt))
+
+    # Размер области моделирования в отсчетах
+    sizeX_m = 1.5
+    maxSize = int(np.ceil(sizeX_m / d))
+
+    # Определение позиций границ слоев
+    layer_x = 0.5
+    layer_x_DX = int(np.ceil(layer_x / d))
+
+    # Новый слой шириной 0.06 м с eps = 5.2
+    layer_new = layer_x + 0.15
+    layer_new_DX = int(np.ceil(layer_new / d))
+    layer_x_2 = layer_new + 0.65
+    layer_x_2_DX = int(np.ceil(layer_x_2 / d))
+    layer_x_3 = layer_x_2 + 0.72
+    layer_x_3_DX = int(np.ceil(layer_x_3 / d))
+
+    # Положение источника в отсчетах
+    sourcePos = 0.3
+    sourcePos = int(np.ceil(sourcePos / d))
+
+    # Датчики для регистрации поля
+    probesPos = [int(np.ceil(0.4 / d)), int(np.ceil(0.15 / d))]
+    probes = [tools.Probe(pos, maxTime) for pos in probesPos]
+
+    # Параметры среды
+    eps = np.ones(maxSize)
+    # Первый слой
+    eps[layer_x_DX:layer_new_DX] = 2.4
+    # Новый слой
+    eps[layer_new_DX:layer_x_2_DX] = 4.1
+    # Третий слой
+    eps[layer_x_2_DX:layer_x_3_DX] = 6
+    # Четвертый слой
+    eps[layer_x_3_DX:] = 5,2
+
+    mu = np.ones(maxSize - 1)
+    Ez = np.zeros(maxSize)
+    Ezspectrumpad = np.zeros(maxSize)
+    Ezspectrumotr = np.zeros(maxSize)
+    Hy = np.zeros(maxSize - 1)
+
+    source = GaussianDiff(1, 2000, 20e9, dt)
+
+    # Коэффициенты для расчета ABC второй степени
+    # Sc' для правой границы
+    Sc1Right = Sc / np.sqrt(mu[-1] * eps[-1])
+    k1Right = -1 / (1 / Sc1Right + 2 + Sc1Right)
+    k2Right = 1 / Sc1Right - 2 + Sc1Right
+    k3Right = 2 * (Sc1Right - 1 / Sc1Right)
+    k4Right = 4 * (1 / Sc1Right + Sc1Right)
+
+    # Ez[0: 2] в предыдущий момент времени (q)
+    oldEzLeft1 = np.zeros(3)
+    # Ez[0: 2] в пред-предыдущий момент времени (q - 1)
+    oldEzLeft2 = np.zeros(3)
+
+    # Ez[-3: -1] в предыдущий момент времени (q)
+    oldEzRight1 = np.zeros(3)
+    # Ez[-3: -1] в пред-предыдущий момент времени
+    oldEzRight2 = np.zeros(3)
+
+    # Параметры отображения поля E
+    display_field = Ez
+    display_ylabel = 'Ez, В/м'
+    display_ymin = -1.1
+    display_ymax = 1.1
+
+# Создание экземпляра класса для отображения распределения поля в пространстве
+    display = tools.AnimateFieldDisplay(maxSize,
+                                        display_ymin, display_ymax,
+                                        display_ylabel)
+    display.activate()
+    display.drawProbes(probesPos)
+    display.drawSources([sourcePos])
+    display.drawBoundary(layer_x_DX)
+    display.drawBoundary(layer_new_DX)  # Граница нового слоя
+    display.drawBoundary(layer_x_2_DX)
+    display.drawBoundary(layer_x_3_DX)
+
+    # Вывод информации о слоях
+    print("\nПараметры слоев:")
+    print(f"1. Воздух (вакуум): от 0 до {layer_x:.3f} м, eps = 1.0")
+    print(f"2. Слой 1: от {layer_x:.3f} до {layer_new:.3f} м, eps = 5.5, ширина = {layer_new - layer_x:.3f} м")
+    print(f"3. Новый слой: от {layer_new:.3f} до {layer_x_2:.3f} м, eps = 5.2, ширина = {layer_x_2 - layer_new:.3f} м")
+    print(f"4. Слой 3: от {layer_x_2:.3f} до {layer_x_3:.3f} м, eps = 2.3, ширина = {layer_x_3 - layer_x_2:.3f} м")
+    print(f"5. Слой 4: от {layer_x_3:.3f} до конца, eps = 1.4")
+
+    # Вывод информации в отсчетах
+    print("\nПозиции границ в отсчетах:")
+    print(f"Граница 1 (начало слоя 1): {layer_x_DX}")
+    print(f"Граница 2 (начало нового слоя): {layer_new_DX}")
+    print(f"Граница 3 (начало слоя 3): {layer_x_2_DX}")
+    print(f"Граница 4 (начало слоя 4): {layer_x_3_DX}")
+
+    for q in range(1, maxTime):
+        # Расчет компоненты поля H
+        Hy[:] = Hy + (Ez[1:] - Ez[:-1]) * Sc / (Z0 * mu)
+
+        # Источник возбуждения с использованием метода
+        # Total Field / Scattered Field
+        Hy[sourcePos - 1] -= Sc / (Z0 * mu[sourcePos - 1]) * source.getE(0, q)
+
+        # Расчет компоненты поля E
+        Ez[1:-1] = Ez[1:-1] + (Hy[1:] - Hy[:-1]) * Sc * Z0 / eps[1:-1]
+
+        # Источник возбуждения с использованием метода TFSF
+        Ez[sourcePos] += (Sc / (np.sqrt(eps[sourcePos] * mu[sourcePos])) *
+                          source.getE(-0.5, q + 0.5))
+
+        Sc1Left = Sc / np.sqrt(mu[0] * eps[0])
+        k1Left = -1 / (1 / Sc1Left + 2 + Sc1Left)
+        k2Left = 1 / Sc1Left - 2 + Sc1Left
+        k3Left = 2 * (Sc1Left - 1 / Sc1Left)
+        k4Left = 4 * (1 / Sc1Left + Sc1Left)
+
+        # Граничные условия ABC второй степени (слева)
+        Ez[0] = (k1Left * (k2Left * (Ez[2] + oldEzLeft2[0]) +
+                           k3Left * (oldEzLeft1[0] + oldEzLeft1[2] - Ez[1] - oldEzLeft2[1]) -
+                           k4Left * oldEzLeft1[1]) - oldEzLeft2[2])
+
+        oldEzLeft2[:] = oldEzLeft1[:]
+        oldEzLeft1[:] = Ez[0: 3]
+
+        # Граничные условия ABC второй степени (справа)
+        Ez[-1] = (k1Right * (k2Right * (Ez[-3] + oldEzRight2[-1]) +
+                             k3Right * (oldEzRight1[-1] + oldEzRight1[-3] - Ez[-2] - oldEzRight2[-2]) -
+                             k4Right * oldEzRight1[-2]) - oldEzRight2[-3])
+
+        oldEzRight2[:] = oldEzRight1[:]
+        oldEzRight1[:] = Ez[-3:]
+
+        # Регистрация поля в датчиках
+        for probe in probes:
+            probe.addData(Ez, Hy)
+
+        if q % 30 == 0:
+            display.updateData(display_field, q)
+    display.stop()
+
+# Отображение сигналов, сохраненных в датчиках
+    tools.showProbeSignals(probes, -1.1, 1.1)
+
+    # Расчет спектра
+    size = maxSize
+    df = 1 / (size * dt)
+    print(df)
+
+    start_index = 100
+    for q in range(1, maxSize):
+        Ezspectrumpad[q] = probes[0].E[q]
+        # Ezspectrumpad[start_index:] = [0] * (len(Ezspectrumpad) - start_index)
+        Ezspectrumotr[q] = probes[1].E[q]
+
+    spectrumpad = np.abs(fft(Ezspectrumpad))
+    spectrumpad = fftshift(spectrumpad)
+
+    spectrumotr = np.abs(fft(Ezspectrumotr))
+    spectrumotr = fftshift(spectrumotr)
+
+    # Расчет частоты
+    freq = np.arange(-size / 2 * df, size / 2 * df, df)
+
+    # Отображение спектра
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(freq, spectrumpad / np.max(spectrumpad))
+    plt.plot(freq, spectrumotr / np.max(spectrumotr))
+    plt.grid()
+    plt.xlabel('Частота, Гц')
+    plt.ylabel('|S| / |Smax|')
+    plt.title('Спектры сигналов (с новым слоем eps=5.2)')
+    plt.xlim(7.5e9, 20e9)
+    plt.legend(['Пропущенный', 'Отраженный'])
+
+    koefotr = spectrumotr / (spectrumpad + 1e-10)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(freq, koefotr)
+    plt.grid()
+    plt.xlabel('Частота, Гц')
+    plt.ylabel('Г')
+    plt.title('Коэффициент отражения')
+    plt.xlim(7.5e9, 20e9)
+    plt.subplots_adjust(wspace=0.4)
+
+    # Визуализация структуры слоев
+    plt.figure(figsize=(10, 6))
+    x_positions = np.arange(maxSize) * d
+    plt.plot(x_positions, eps, 'b-', linewidth=2)
+    plt.xlabel('Позиция, м')
+    plt.ylabel('ε (диэлектрическая проницаемость)')
+    plt.title('Структура слоев с новым слоем ε=5.2')
+    plt.grid(True, alpha=0.3)
+
+    layer_boundaries = [layer_x, layer_new, layer_x_2, layer_x_3]
+    layer_labels = ['ε=5.5', 'ε=5.2', 'ε=2.3', 'ε=1.4']
+
+    for i, boundary in enumerate(layer_boundaries):
+        plt.axvline(x=boundary, color='r', linestyle='--', alpha=0.5)
+        if i < len(layer_labels):
+            plt.text(boundary + 0.01, np.max(eps) / 2, layer_labels[i],
+                     rotation=90, verticalalignment='center')
+    plt.show()
