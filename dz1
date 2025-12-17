@@ -1,0 +1,238 @@
+# -*- coding: utf-8 -*-
+import numpy as np
+from numpy.fft import fft, fftshift
+import tools
+import matplotlib.pyplot as plt
+
+class HarmonicSource:
+
+    def init(self, magnitude, frequency, dt, Sc=1.0, eps=1.0, mu=1.0):
+        self.magnitude = magnitude
+        self.frequency = frequency
+        self.dt = dt
+        self.Sc = Sc
+        self.eps = eps
+        self.mu = mu
+        self.omega = 2 * np.pi * frequency
+
+    def getE(self, m, q):
+        # Временная задержка для коррекции фазы
+        time_delay = q * self.dt - m * np.sqrt(self.eps * self.mu) / self.Sc * self.dt
+
+        # Гармонический сигнал:
+        return self.magnitude * np.sin(self.omega * time_delay)
+
+if name == 'main':
+    d = 1e-3
+    # Характеристическое сопротивление свободного пространства
+    Z0 = 120.0 * np.pi
+    # Число Куранта
+    Sc = 1.0
+    # Магнитная постоянная
+    mu0 = np.pi * 4e-7
+    # Электрическая постоянная
+    eps0 = 8.854187817e-12
+    # Скорость света в вакууме
+    c = 1.0 / np.sqrt(mu0 * eps0)
+
+    Cdtds = 1.0 / np.sqrt(2.0)
+    dt = d / c * Cdtds
+    print(f"Шаг по времени dt = {dt:.2e} с")
+
+    # Время расчета в отсчетах
+    maxTime_sec = 12e-9
+    maxTime = int(np.ceil(maxTime_sec / dt))
+
+    # Размер области моделирования в отсчетах
+    sizeX_m = 6.0
+    maxSize = int(np.ceil(sizeX_m / d))
+
+    # Положение источника в отсчетах
+    sourcePos = 1.0
+    sourcePos = int(np.ceil(sourcePos / d))
+
+    # Датчики для регистрации поля
+    probesPos = 2.0
+    probesPos = [int(np.ceil(probesPos / d))]
+    probes = [tools.Probe(pos, maxTime) for pos in probesPos]
+
+    # Параметры среды
+    eps = np.ones(maxSize) * 6
+    mu = np.ones(maxSize - 1)
+
+    Ez = np.zeros(maxSize)
+    Ezspectrum = np.zeros(maxSize)
+    Hy = np.zeros(maxSize - 1)
+
+    # Гармонический источник с частотой 3 ГГц
+    frequency = 3e9
+    source = HarmonicSource(1.0, frequency, dt)
+
+    # КОЭФФИЦИЕНТЫ ДЛЯ ABC ПЕРВОЙ СТЕПЕНИ (СЛЕВА)
+    # Эффективное число Куранта для левой границы
+    Sc_eff_left = Sc / np.sqrt(mu[0] * eps[0])
+    
+    # Коэффициент для левой границы (первая степень)
+    abc_coeff_left = (Sc_eff_left - 1) / (Sc_eff_left + 1)
+    oldEzLeft = 0.0
+    oldEzLeftNext = 0.0
+
+    # ИДЕАЛЬНЫЙ МАГНИТНЫЙ ПРОВОДНИК (PMC) СПРАВА
+    # Параметры отображения поля E
+    display_field = Ez
+    display_ylabel = 'Ez, В/м'
+    display_ymin = -2.1
+    display_ymax = 2.1
+
+    # распределения поля в пространстве
+    display = tools.AnimateFieldDisplay(maxSize,
+                                        display_ymin,
+                                        display_ymax,
+                                        display_ylabel)
+    display.activate()
+    display.drawProbes(probesPos)
+    display.drawSources([sourcePos])
+    
+    display.drawBoundary([maxSize - 1])
+
+    for q in range(1, maxTime):
+        # Расчет компоненты поля H
+        Hy[:] = Hy + (Ez[1:] - Ez[:-1]) * Sc / (Z0 * mu)
+
+        # Источник возбуждения с использованием метода TFSF
+        Hy[sourcePos - 1] -= Sc/(Z0 * mu[sourcePos-1])*source.getE(0, q)
+
+        # Расчет компоненты поля E
+        Ez[1:-1] = Ez[1:-1] + (Hy[1:] - Hy[:-1]) * Sc * Z0 / eps[1:-1]
+
+        # Источник возбуждения с использованием метода
+        # Total Field / Scattered Field
+        Ez[sourcePos]+=(Sc / (np.sqrt(eps[sourcePos]*mu[sourcePos])) *
+                          source.getE(-0.5, q + 0.5))
+
+        # ГРАНИЧНОЕ УСЛОВИЕ: ABC ПЕРВОЙ СТЕПЕНИ СЛЕВА
+        # Сохраняем текущие значения перед обновлением
+        current_Ez_0 = Ez[0]  # Ez[0] 
+        current_Ez_1 = Ez[1]  # Ez[1] 
+        
+        # ABC первой степени для левой границы:
+        # Ez^{n+1}(0) = Ez^{n}(1) + k * (Ez^{n+1}(1) - Ez^{n}(0))
+        # где k = (Sc_eff - 1)/(Sc_eff + 1)
+        
+        # Сохраняем старое значение границы
+        old_left_boundary_value = oldEzLeft
+        
+        # Обновляем левое граничное значение
+        Ez[0] = oldEzLeftNext + abc_coeff_left * (current_Ez_1 - old_left_boundary_value)
+        
+        # Обновляем сохраненные значения для следующей итерации
+        oldEzLeftNext = current_Ez_1 
+        oldEzLeft = current_Ez_0  
+
+        # Регистрация поля в датчиках
+        for probe in probes:
+            probe.addData(Ez, Hy)
+
+        # Сохраняем поле для спектрального анализа
+        Ezspectrum[q] = Ez[sourcePos]
+
+        if q % 40 == 0:
+            display.updateData(display_field, q)
+            
+            # Для отладки: выводим информацию о граничных значениях
+            if q == 40:
+                print(f"Коэффициент ABC слева: {abc_coeff_left:.4f}")
+                print(f"Значение Ez на левой границе: {Ez[0]:.6f}")
+                print(f"Значение Ez на правой границе (PMC): {Ez[-1]:.6f}")
+                print(f"Значение Ez[-2]: {Ez[-2]:.6f}")
+
+    display.stop()
+# Отображение сигналов, сохраненных в датчиках
+    tools.showProbeSignals(probes, -2.1, 2.1)
+
+    # Расчет спектра гармонического сигнала
+    signal = probes[0].E
+
+    start_index = int(0.1 * len(signal))  # первые 10% сигнала
+    signal_for_fft = signal[start_index:]
+    N_zeros = 8 * len(signal_for_fft)  # в 8 раз увеличиваем длину
+    signal_padded    # Нормировка
+    spectrum_norm = spectrum_pos / np.max(spectrum_pos)
+
+    # Отображение сигнала и спектра
+    plt.figure(figsize=(12, 5))
+
+    # График временного сигнала
+    plt.subplot(1, 2, 1)
+    time = np.arange(len(signal)) * dt
+    plt.plot(time * 1e9, signal)
+    plt.grid()
+    plt.xlabel('Время, нс')
+    plt.ylabel('Ez, В/м')
+    plt.title(f'Гармонический сигнал ({frequency / 1e9:.1f} ГГц) в датчике')
+    plt.xlim(0, maxTime_sec * 1e9)
+    
+    plt.axvline(x=0, color='b', linestyle='--', alpha=0.5, label='ABC слева')
+    plt.axvline(x=time[-1] * 1e9, color='r', linestyle='--', alpha=0.5, label='PMC справа')
+    plt.legend()
+
+    # График спектра
+    plt.subplot(1, 2, 2)
+    plt.plot(freq_pos, spectrum_norm)
+    plt.grid()
+    plt.xlabel('Частота, Гц')
+    plt.ylabel('|S| / |Smax|')
+    plt.title('Спектр гармонического сигнала')
+    plt.xlim(0, 13e9)
+
+    # Отмечаем ожидаемую частоту
+    plt.axvline(x=frequency, color='r', linestyle='--', alpha=0.7,
+                label=f'Основная частота: {frequency / 1e9:.1f} ГГц')
+
+    plt.legend()
+    plt.tight_layout()
+    plt.show() = np.zeros(N_zeros)
+    signal_padded[:len(signal_for_fft)] = signal_for_fft
+
+    size = len(signal_padded)
+    df = 1 / (size * dt)
+
+    spectrum = np.abs(fft(signal_padded))
+
+    freq_pos = np.fft.rfftfreq(size, dt)
+    spectrum_pos = np.abs(fft(signal_padded)[:len(freq_pos)])
+
+    # Нормировка
+    spectrum_norm = spectrum_pos / np.max(spectrum_pos)
+
+    plt.figure(figsize=(12, 5))
+
+    # График временного сигнала
+    plt.subplot(1, 2, 1)
+    time = np.arange(len(signal)) * dt
+    plt.plot(time * 1e9, signal)
+    plt.grid()
+    plt.xlabel('Время, нс')
+    plt.ylabel('Ez, В/м')
+    plt.title(f'Гармонический сигнал ({frequency / 1e9:.1f} ГГц) в датчике')
+    plt.xlim(0, maxTime_sec * 1e9)
+    
+    plt.axvline(x=0, color='b', linestyle='--', alpha=0.5, label='ABC слева')
+    plt.axvline(x=time[-1] * 1e9, color='r', linestyle='--', alpha=0.5, label='PMC справа')
+    plt.legend()
+
+    # График спектра
+    plt.subplot(1, 2, 2)
+    plt.plot(freq_pos, spectrum_norm)
+    plt.grid()
+    plt.xlabel('Частота, Гц')
+    plt.ylabel('|S| / |Smax|')
+    plt.title('Спектр гармонического сигнала')
+    plt.xlim(0, 13e9)
+
+    plt.axvline(x=frequency, color='r', linestyle='--', alpha=0.7,
+                label=f'Основная частота: {frequency / 1e9:.1f} ГГц')
+
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
